@@ -1,14 +1,37 @@
-# mcp-vroid
+# MCP VRoid — macOS & Linux
 
-**Drive VRoid Studio from any MCP client, on Linux/Wayland or macOS.**
-Launch the app, look at it, find widgets in the picture, click and type, set
-parameters, and export a `.vrm` — all as MCP tools.
+**Control VRoid Studio through MCP on macOS and Linux/Hyprland.**
+Launch VRoid, capture its window, locate controls with OCR, edit character
+parameters, and run save/export flows from an MCP client.
 
-**Status:** experimental GUI automation for VRoid Studio 2.14.0 (English UI).
-Linux/Hyprland and native macOS are supported; Windows is not supported.
-On macOS, window handling, OCR, parameter editing and save-dialog entry have
-been exercised live. The final save/export and VRM Settings flow still need
-end-to-end validation with a throwaway model. Run desktop actions attended.
+This is [ohm41321/mcp-vroid](https://github.com/ohm41321/mcp-vroid), our
+version of [nhodges/mcp-vroid](https://github.com/nhodges/mcp-vroid). It adds
+a native macOS backend while retaining the original Linux/Hyprland backend.
+Both platforms use the same 18 MCP tools.
+
+## Platform support
+
+| Platform | VRoid installation | Support and validation |
+|---|---|---|
+| **macOS** | Native VRoid Studio.app | Added in this version. Window handling, OCR, parameter editing and save-dialog entry exercised on macOS 26 / Apple silicon. Final save/export and the VRM Settings flow still need end-to-end validation. |
+| **Linux / Hyprland** | Steam / Proton | Retained from upstream, where it was developed and tested on Arch Linux + Hyprland. Requires Xwayland and the native pointer helper. |
+
+The backend is selected automatically: `macos` on macOS, `hyprland` on Linux.
+Override it with `MCP_VROID_BACKEND=macos` or `MCP_VROID_BACKEND=hyprland`.
+Other Linux compositors and Windows are not currently supported.
+
+**Status:** experimental GUI automation calibrated for VRoid Studio 2.14.0
+(English UI). Run desktop actions attended.
+
+## What's included in this version
+
+* Native macOS window discovery, capture and mouse/keyboard input through
+  Quartz, AppKit and CGEvent, with Accessibility and Screen Recording checks.
+* A shared driver interface for macOS and Linux, including platform-aware
+  shortcuts (`cmd` maps to Command on macOS and Control on Linux).
+* OCR fallback for light-grey UI labels and Retina-aware UI anchors.
+* Unicode handling for macOS text input, including emoji.
+* Display-free unit tests and a GitHub Actions matrix for Linux and macOS.
 
 ## Why
 
@@ -27,8 +50,9 @@ is the eyes; these tools are the hands.
 
 ## Demo
 
-Everything below was done by an MCP client calling these tools — no human at
-the mouse.
+These screenshots come from the upstream Linux/Hyprland demo, driven by an
+MCP client. They illustrate the shared tools; they are not evidence of a
+completed macOS export.
 
 Setting body parameters by typing exact values into the Parameters panel
 (`vroid_open_tab("Body")` → `vroid_set_slider("Head Size", -0.15)`):
@@ -53,8 +77,9 @@ overrides): everything desktop-specific lives in
 
 ### Linux: Hyprland
 
-Developed and tested on **Arch Linux + Hyprland**, with VRoid Studio 2.14.0
-(English UI) running under **Steam/Proton**. What is actually load-bearing:
+The upstream Linux backend was developed and tested on **Arch Linux +
+Hyprland**, with VRoid Studio 2.14.0 (English UI) running under
+**Steam/Proton**. Requirements:
 
 | | needed for | how portable |
 |---|---|---|
@@ -119,6 +144,9 @@ arrive as `FlagsChanged` events, so plain key-down events for ⌘ made
 `Cmd+Shift+S` a no-op while AppKit's save panel accepted them fine.
 
 ## Quickstart
+
+Both platforms require **Python 3.11+**, [`uv`](https://docs.astral.sh/uv/)
+and an installed copy of VRoid Studio with its UI set to English.
 
 ```bash
 git clone https://github.com/ohm41321/mcp-vroid.git
@@ -388,7 +416,8 @@ tests/                        display-free unit tests
 
 ## Contributing
 
-Issues and PRs welcome. Useful things to bring:
+Open [issues](https://github.com/ohm41321/mcp-vroid/issues) and pull requests
+in this repository. Useful contributions include:
 
 * **A port to another compositor or OS.** Implement the module-level
   functions in `driver/backends/hyprland.py` (a Sway port is a `swaymsg`
@@ -406,10 +435,13 @@ Python 3.11 and 3.12. Desktop smoke tests and live VRoid flows must be run
 locally. There is no formatter or linter configured; match the surrounding
 style.
 
-## Licence
+## Credits and licence
 
-Based on [nhodges/mcp-vroid](https://github.com/nhodges/mcp-vroid), with
-native macOS support and additional tests in this repository.
+Original project and Linux implementation:
+[nhodges/mcp-vroid](https://github.com/nhodges/mcp-vroid) by Nuri Hodges.
+This repository adds native macOS support, cross-platform driver structure,
+tests and setup documentation. The original MIT copyright notice is
+preserved in [LICENSE](LICENSE).
 
 MIT — see [LICENSE](LICENSE). VRoid Studio is a product of pixiv Inc.; this
 project is unaffiliated with pixiv and simply drives the app's UI.
