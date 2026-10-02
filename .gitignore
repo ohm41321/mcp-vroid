@@ -5,6 +5,16 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# local credentials and macOS metadata
+.env
+.env.*
+!.env.example
+.DS_Store
 
 # native build products (built by native/build.sh)
 native/vpointer

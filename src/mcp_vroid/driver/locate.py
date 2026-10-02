@@ -34,23 +34,41 @@ class Match:
 
 # --- OCR --------------------------------------------------------------------
 
-def _prep(img: Image.Image, upscale: float, invert: bool) -> Image.Image:
+def _prep(img: Image.Image, upscale: float, invert: bool,
+          gamma: float = 1.0) -> Image.Image:
     g = img.convert("L")
     if invert:
         g = ImageOps.invert(g)
     if upscale != 1.0:
         g = g.resize((int(g.width * upscale), int(g.height * upscale)),
                      Image.LANCZOS)
-    return ImageOps.autocontrast(g)
+    g = ImageOps.autocontrast(g)
+    if gamma != 1.0:
+        # Darken the midtones. VRoid's inactive tab labels and captions are
+        # light grey on white; autocontrast cannot help once the frame holds
+        # any true black (an icon, the hamburger), so a gamma curve pulls
+        # them into tesseract's range instead.
+        lut = [int(255 * (v / 255) ** gamma) for v in range(256)]
+        g = g.point(lut)
+    return g
+
+
+# Preprocessing passes, as (invert, gamma): plain, then inverted
+# (light-on-dark labels). The midtone boost rescues grey-on-white labels
+# that autocontrast cannot separate once the frame holds true black (macOS
+# captures); find_text only pays for it when the first two found nothing.
+PASSES = ((False, 1.0), (True, 1.0))
+FALLBACK_PASSES = ((False, 2.0),)
 
 
 def ocr_words(img: Image.Image | Shot, upscale: float = 2.0,
               invert: bool = False, lang: str = "eng",
-              psm: int = 11, min_conf: float = 40.0) -> list[Match]:
+              psm: int = 11, min_conf: float = 40.0,
+              gamma: float = 1.0) -> list[Match]:
     """Word boxes in *image pixel* coordinates of the original image."""
     if isinstance(img, Shot):
         img = img.image
-    prepped = _prep(img, upscale, invert)
+    prepped = _prep(img, upscale, invert, gamma)
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "ocr.png"
         prepped.save(p)
@@ -98,7 +116,9 @@ def find_text(img: Image.Image | Shot, needle: str, *, exact: bool = False,
     """Locate `needle` and return its center in image-pixel coords.
 
     Returns a Match (or list with all_matches=True), or None.
-    Tries dark-on-light then light-on-dark, since VRoid mixes both.
+    Tries dark-on-light, then light-on-dark, then - only if those found
+    nothing - a midtone-boosted pass for grey-on-white, since VRoid mixes
+    all three.
     """
     src = img.image if isinstance(img, Shot) else img
     off = (0, 0)
@@ -110,19 +130,25 @@ def find_text(img: Image.Image | Shot, needle: str, *, exact: bool = False,
     found: list[Match] = []
     seen = set()
     psms = [kw.pop("psm")] if "psm" in kw else [11, 6]
-    for invert, psm in [(i, p) for i in (False, True) for p in psms]:
-        for m in ocr_words(src, invert=invert, psm=psm, **kw):
-            t = _norm(m.text)
-            hit = (t == want) if exact else (want in t or (len(t) > 2 and t in want))
-            if not hit:
-                continue
-            m = Match(m.text, m.conf, m.left + off[0], m.top + off[1],
-                      m.width, m.height)
-            key = (round(m.left / 8), round(m.top / 8), t)
-            if key in seen:
-                continue
-            seen.add(key)
-            found.append(m)
+
+    def run(passes):
+        for (invert, gamma), psm in [(pp, p) for pp in passes for p in psms]:
+            for m in ocr_words(src, invert=invert, psm=psm, gamma=gamma, **kw):
+                t = _norm(m.text)
+                hit = (t == want) if exact else (want in t or (len(t) > 2 and t in want))
+                if not hit:
+                    continue
+                m = Match(m.text, m.conf, m.left + off[0], m.top + off[1],
+                          m.width, m.height)
+                key = (round(m.left / 8), round(m.top / 8), t)
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append(m)
+
+    run(PASSES)
+    if not found:
+        run(FALLBACK_PASSES)
     found.sort(key=lambda m: -m.conf)
     if all_matches:
         return found
@@ -130,12 +156,12 @@ def find_text(img: Image.Image | Shot, needle: str, *, exact: bool = False,
 
 
 def all_text(img: Image.Image | Shot, **kw) -> list[Match]:
-    """Every word tesseract sees, both polarities, deduped."""
+    """Every word tesseract sees, all preprocessing passes, deduped."""
     src = img.image if isinstance(img, Shot) else img
     out: list[Match] = []
     seen = set()
-    for invert in (False, True):
-        for m in ocr_words(src, invert=invert, **kw):
+    for invert, gamma in PASSES + FALLBACK_PASSES:
+        for m in ocr_words(src, invert=invert, gamma=gamma, **kw):
             key = (round(m.left / 8), round(m.top / 8), _norm(m.text))
             if key in seen or not _norm(m.text):
                 continue

@@ -1,6 +1,6 @@
 """vroid-driver CLI:  python -m driver.cli <subcommand>
 
-    launch                      launch VRoid, park it on ws 9, focus, fullscreen
+    launch                      launch VRoid, park it (ws 9), focus, fullscreen (macOS: maximise)
     shot [tag]                  screenshot the window -> captures/NNN-tag.png
     screen                      print which screen we're on
     text [--region x,y,w,h]     dump every word tesseract sees, with centres
@@ -13,7 +13,7 @@
     slider "Fem Height" 0.6     set a Parameters value
     new-character [Fem|Masc]    start screen -> new model
     export out/spike.vrm        full Export-as-VRM walk
-    restore                     switch back to the workspace you came from
+    restore                     switch back to the workspace (or macOS app) you came from
 
 Every acting subcommand refuses to run unless VRoid Studio is the focused
 window.
@@ -76,7 +76,7 @@ def main(argv=None) -> int:
     sp.add_argument("out", nargs="?", default=None)
     sp.add_argument("--name", default="SpikeAvatar")
     sp.add_argument("--creators", default="arrakis-vroid-driver")
-    sp = sub.add_parser("restore"); sp.add_argument("workspace", type=int)
+    sp = sub.add_parser("restore"); sp.add_argument("workspace")
 
     a = p.parse_args(argv)
 
@@ -87,7 +87,8 @@ def main(argv=None) -> int:
         return 0
 
     if a.cmd == "restore":
-        W.leave(a.workspace)
+        ws = a.workspace
+        W.leave(int(ws) if ws.lstrip("-").isdigit() else ws)
         return 0
 
     if a.cmd == "shot":

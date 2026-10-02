@@ -1,21 +1,28 @@
 # mcp-vroid
 
-**Drive VRoid Studio from any MCP client, on Linux/Wayland.** Launch the app,
-look at it, find widgets in the picture, click and type, set parameters, and
-export a `.vrm` — all as MCP tools.
+**Drive VRoid Studio from any MCP client, on Linux/Wayland or macOS.**
+Launch the app, look at it, find widgets in the picture, click and type, set
+parameters, and export a `.vrm` — all as MCP tools.
+
+**Status:** experimental GUI automation for VRoid Studio 2.14.0 (English UI).
+Linux/Hyprland and native macOS are supported; Windows is not supported.
+On macOS, window handling, OCR, parameter editing and save-dialog entry have
+been exercised live. The final save/export and VRM Settings flow still need
+end-to-end validation with a throwaway model. Run desktop actions attended.
 
 ## Why
 
 VRoid Studio has no scripting API, no CLI, no plugin surface. The only way in
 is the one a person uses: look at the window and move the mouse. So that is
-what this does — screenshot the window with `grim`, locate things with OCR and
-colour matching, and inject real pointer and keyboard events at the compositor
-level. The MCP client's model is the eyes; these tools are the hands.
+what this does — screenshot the window (`grim` on Hyprland, `screencapture`
+on macOS), locate things with OCR and colour matching, and inject real
+pointer and keyboard events at the compositor level. The MCP client's model
+is the eyes; these tools are the hands.
 
 ```
-   grim ──► PNG ──► tesseract / cv2 ──► (x, y) ──► virtual pointer / XTEST
-    ▲                                                        │
-    └────────────────────  screenshot again  ◄───────────────┘
+   grim / screencapture ──► PNG ──► tesseract / cv2 ──► (x, y) ──► virtual pointer + XTEST / CGEvent
+    ▲                                                                          │
+    └──────────────────────────  screenshot again  ◄───────────────────────────┘
 ```
 
 ## Demo
@@ -40,12 +47,18 @@ walks the whole flow, including Wine's save dialog):
 
 ## Requirements
 
+Two backends, picked by platform (`MCP_VROID_BACKEND=hyprland|macos`
+overrides): everything desktop-specific lives in
+`src/mcp_vroid/driver/backends/`.
+
+### Linux: Hyprland
+
 Developed and tested on **Arch Linux + Hyprland**, with VRoid Studio 2.14.0
 (English UI) running under **Steam/Proton**. What is actually load-bearing:
 
 | | needed for | how portable |
 |---|---|---|
-| **Hyprland** ≥ 0.55 | window discovery, focus, workspaces, closing the screensaver — via `hyprctl` and its Lua dispatch API | **Hyprland-specific.** All of it lives in `src/mcp_vroid/driver/window.py`; a Sway port is a `swaymsg` rewrite of that one file. |
+| **Hyprland** ≥ 0.55 | window discovery, focus, workspaces, closing the screensaver — via `hyprctl` and its Lua dispatch API | **Hyprland-specific.** Implemented in `src/mcp_vroid/driver/backends/hyprland.py`; other compositors need a backend port. |
 | `grim` | screenshots | any **wlroots** compositor (`wlr-screencopy`) |
 | **`zwlr_virtual_pointer_unstable_v1`** | moving and clicking the real cursor | any **wlroots** compositor |
 | **Xwayland** (`DISPLAY`) | keyboard and wheel, via X11 **XTEST** | any Wayland session with Xwayland |
@@ -61,19 +74,75 @@ for window management. On Arch:
 sudo pacman -S grim tesseract tesseract-data-eng wayland gcc pkgconf
 ```
 
+### macOS
+
+Tested on macOS 26 (Apple silicon, Retina) with the **native VRoid Studio
+2.14.0** build from vroid.com (bundle `net.pixiv.vroid.macosx`). No Steam, no
+Wine, no native helper to compile.
+
+| | needed for | notes |
+|---|---|---|
+| `pyobjc-framework-Quartz` (+ Cocoa) | window list, focus, CGEvent input, screen geometry | installed by `uv sync` on macOS |
+| `/usr/sbin/screencapture` | screenshots | ships with macOS |
+| System Events (`osascript`) | maximising the window, un-minimising it, focus fallback | ships with macOS |
+| `tesseract` + `eng` | OCR | `brew install tesseract` |
+| **Accessibility** permission | posting pointer/keyboard events, System Events | see below |
+| **Screen Recording** permission | `screencapture`; without it you get the wallpaper, silently | see below |
+| VRoid Studio.app | the app being driven | `open -b net.pixiv.vroid.macosx` is how it is launched |
+
+**Permissions:** open *System Settings → Privacy & Security → Accessibility*
+and *→ Screen Recording*. Grant access to the responsible process shown by
+macOS: this may be your terminal or MCP client, or the Python executable
+used by `uv`. Granting only the host app is not always sufficient. Restart
+the host and MCP server after granting, then check that `vroid_status`
+reports `helpers.accessibility` and `helpers.screen_recording` as `true`.
+Acting tools refuse to run without Accessibility.
+
+What "workspace 9" means here: `vroid_launch` brings VRoid to the front and
+maximises its window to the screen's visible frame (menu bar excluded). The
+Unity window has no native fullscreen — its zoom button is a plain
+`AXZoomButton` and `AXFullScreen` only re-zooms it — so the 28 pt title bar
+stays; the backend trims it from the reported geometry and from captures,
+so `y = 0` is the tab strip like on Hyprland. `vroid_release` re-activates
+the app you were in before (switching the Space back if VRoid was in
+another one). Window captures normally use the window id
+(`screencapture -l`), which works from any Space without activating VRoid.
+If that capture does not match the reported bounds (for example, a Stage
+Manager thumbnail), the fallback may bring VRoid forward and switch Spaces
+before capturing its screen region.
+
+Two things that bit during bring-up, both handled in the backend: macOS
+attributes permissions to the *responsible process*, which under some hosts
+is the `python3.12` binary in uv's cache rather than the host app (check the
+Accessibility list for it); and Unity only sees ⌘/⇧ when the modifiers
+arrive as `FlagsChanged` events, so plain key-down events for ⌘ made
+`Cmd+Shift+S` a no-op while AppKit's save panel accepted them fine.
+
 ## Quickstart
 
 ```bash
-git clone https://github.com/nhodges/mcp-vroid
+git clone https://github.com/ohm41321/mcp-vroid.git
 cd mcp-vroid
-uv sync                 # virtualenv + dependencies
-bash native/build.sh    # builds native/vpointer  <-- REQUIRED, not optional
+uv sync --locked        # virtualenv + platform-specific dependencies
 ```
 
-`native/build.sh` compiles a ~150-line C client for the Wayland
+On **Linux/Hyprland**, also build the required pointer helper:
+
+```bash
+bash native/build.sh
+```
+
+On **macOS**, install OCR and grant the permissions described above:
+
+```bash
+brew install tesseract
+```
+
+On Linux, `native/build.sh` compiles a ~150-line C client for the Wayland
 virtual-pointer protocol (the protocol XML is vendored under
 `native/protocols/`). Without it every pointer tool fails with
-`native/vpointer missing`; `vroid_status` tells you whether it is there.
+`native/vpointer missing`; `vroid_status` tells you whether it is there. On
+macOS there is nothing to build — grant the two permissions instead.
 
 Register it with Claude Code:
 
@@ -97,21 +166,25 @@ claude mcp add vroid -- uv run --directory /path/to/mcp-vroid mcp-vroid
 Then ask your client to call `vroid_status`, and if it looks healthy,
 `vroid_launch()`.
 
-Clients often start servers with a **sanitised environment**. This server
-recovers `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`
-and `DISPLAY` from the runtime dir at startup
+Clients often start servers with a **sanitised environment**. On Linux this
+server recovers `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`,
+`HYPRLAND_INSTANCE_SIGNATURE` and `DISPLAY` from the runtime dir at startup
 (`src/mcp_vroid/session_env.py`), so `hyprctl` / `grim` / XTEST work anyway.
 `vroid_status` reports what it had to fill in; anything already in the
-environment wins.
+environment wins. macOS needs nothing recovered.
 
 Optional environment variables:
 
 | var | default | meaning |
 |---|---|---|
-| `MCP_VROID_CAPTURES` | `$XDG_STATE_HOME/mcp-vroid/captures` | where screenshots are written |
-| `MCP_VROID_OUT` | `$XDG_STATE_HOME/mcp-vroid/out` | default dir for exports/saves |
-| `MCP_VROID_VPOINTER` | `<checkout>/native/vpointer` | path to the pointer helper |
+| `MCP_VROID_CAPTURES` | `<state-home>/mcp-vroid/captures` | where screenshots are written |
+| `MCP_VROID_OUT` | `<state-home>/mcp-vroid/out` | default dir for exports/saves |
+| `MCP_VROID_VPOINTER` | `<checkout>/native/vpointer` | path to the pointer helper (Linux) |
 | `MCP_VROID_MAX_IMAGE_PX` | `1600` | longest edge of images sent to the client (0 = never downscale) |
+| `MCP_VROID_BACKEND` | by platform | `hyprland` or `macos` |
+
+`<state-home>` is `$XDG_STATE_HOME`, or `~/.local/state` when unset, on both
+platforms. Captures and exports are kept outside the checkout by default.
 
 ## Tools
 
@@ -121,16 +194,16 @@ Optional environment variables:
 
 | tool | what it does |
 |---|---|
-| `vroid_launch(restart=false, timeout=240)` | Start VRoid via Steam if needed, park it on Hyprland workspace 9, remember the workspace you were on, focus + fullscreen it. `restart=true` kills the running instance first — unsaved work is lost. |
-| `vroid_status()` | Window present/focused/title/geometry, active workspace, capture dirs, and whether `vpointer`/`grim`/`tesseract`/`hyprctl` are available. Read-only, no OCR. |
-| `vroid_release()` | Switch back to the workspace the user was on. VRoid keeps running on ws 9. |
+| `vroid_launch(restart=false, timeout=240)` | Start VRoid if needed (Steam on Linux, the app bundle on macOS), park it on Hyprland workspace 9 / bring it to the front on macOS, remember where you were, focus + fullscreen (macOS: maximise) it. `restart=true` kills the running instance first — unsaved work is lost. |
+| `vroid_status()` | Backend, window present/focused/title/geometry, active workspace (frontmost app on macOS), capture dirs, and whether the helpers — `vpointer`/`grim`/`tesseract`/`hyprctl`, or pyobjc/`screencapture`/`tesseract` plus the Accessibility and Screen Recording permissions — are available. Read-only, no OCR. |
+| `vroid_release()` | Switch back to the workspace (Linux) or app (macOS) the user was on. VRoid keeps running. |
 
 **Seeing**
 
 | tool | what it does |
 |---|---|
-| `vroid_screenshot(region?, tag?, whole_screen?, full_resolution?)` | Capture the window (or the whole output, for the Wine save dialog), save it, and return it as MCP image content for the client's model to look at. Reports native size and the downscale factor applied for transport. |
-| `vroid_find_text(query, region?, exact?, limit?)` | Fresh capture + tesseract; returns matching word boxes and centres in image px. Pass `region` — full-frame OCR takes ~10 s, a panel ~2 s. |
+| `vroid_screenshot(region?, tag?, whole_screen?, full_resolution?)` | Capture the window (or the whole output, for the save dialog), save it, and return it as MCP image content for the client's model to look at. Reports native size and the downscale factor applied for transport. |
+| `vroid_find_text(query, region?, exact?, limit?)` | Fresh capture + tesseract; returns matching word boxes and centres in image px. Pass `region` to reduce OCR work. Timing depends on the machine: the Linux reference took ~10 s per full frame; the M-series Mac took ~0.6 s per pass. |
 | `vroid_find_button(color='primary'\|'disabled', label?, region?)` | Finds VRoid's solid `#0096FA` pills by colour, because tesseract loses white-on-blue labels. A grey pill means *disabled*. |
 | `vroid_current_screen()` | `start` / `editor` / `export_vrm` / `hair_editor` / `unknown`. |
 
@@ -140,9 +213,9 @@ Optional environment variables:
 |---|---|
 | `vroid_click(x, y, space='image', button='left', double=false)` | Glides the pointer in a few steps (so hover states fire) and clicks. |
 | `vroid_drag(x1, y1, x2, y2, space='image', button='left')` | Press → 24-step glide → release. Right-drag orbits the camera, middle-drag pans. |
-| `vroid_scroll(dy, dx=0, x?, y?, space='image')` | Wheel, as X11 buttons 4/5 (6/7 horizontal). Park the pointer over the panel you mean to scroll. |
-| `vroid_type(text, clear_first=false)` | Types into the focused widget over XTEST. |
-| `vroid_key(combo, times=1)` | `Return`, `Escape`, `ctrl+s`, `ctrl+shift+s`, … |
+| `vroid_scroll(dy, dx=0, x?, y?, space='image')` | Wheel notches (X11 buttons 4/5 and 6/7, or CGEvent scroll-wheel lines). Park the pointer over the panel you mean to scroll. |
+| `vroid_type(text, clear_first=false)` | Types into the focused widget (XTEST / CGEvent). |
+| `vroid_key(combo, times=1)` | `Return`, `Escape`, `cmd+s`, `cmd+shift+s`, … — `cmd` is the app's shortcut modifier on either platform (Ctrl on Linux, ⌘ on macOS); `ctrl` is the literal Control key. |
 
 **Acting — flows**
 
@@ -152,8 +225,8 @@ Optional environment variables:
 | `vroid_open_tab(name)` | Face / Hairstyle / Body / Outfit / Accessories / Look. |
 | `vroid_set_slider(label, value)` | Scrolls the Parameters panel to the row and types an exact value into its numeric box. |
 | `vroid_set_color(label, hex)` | Same, for a `#RRGGBB` colour box. |
-| `vroid_export_vrm(path, avatar_name, creator, version='1.0')` | The whole Export-as-VRM walk, including the VRM Settings metadata modal and Wine's save dialog. `version` picks VRM1.0 or VRM0.0. |
-| `vroid_save_project(name?)` | Ctrl+Shift+S to an explicit `.vroid` path, or a plain Save with no argument. |
+| `vroid_export_vrm(path, avatar_name, creator, version='1.0')` | The whole Export-as-VRM walk, including the VRM Settings metadata modal and the save dialog (Wine's, or the macOS save panel). `version` picks VRM1.0 or VRM0.0. |
+| `vroid_save_project(name?)` | Ctrl/Cmd+Shift+S to an explicit `.vroid` path, or a plain Save with no argument. |
 
 Every acting tool focuses VRoid first and **refuses to act if the focused
 window is not VRoid Studio**.
@@ -168,11 +241,14 @@ The loop is **see → locate → act → see again**:
 4. `vroid_click(x, y)` — always with coordinates from a *fresh* capture
 5. `vroid_screenshot()` to confirm what actually happened
 
-**Seeing** is `grim` on the Hyprland window geometry, then tesseract for word
-boxes and OpenCV for solid-colour buttons (VRoid's primary pills are
-`#0096FA`, and OCR reliably loses white-on-blue labels).
+**Seeing** is `grim` (Hyprland) on the window geometry or `screencapture -l`
+(macOS) on the window id, then tesseract for word boxes and OpenCV for
+solid-colour buttons (VRoid's primary pills are `#0096FA`, and OCR reliably
+loses white-on-blue labels). OCR runs a plain and an inverted (light-on-dark)
+pass, and a midtone-boosted pass for VRoid's light-grey captions when those
+two find nothing.
 
-**Acting** goes down two different paths, for annoying reasons:
+**Acting** on Hyprland goes down two different paths, for annoying reasons:
 
 * *Pointer* — a small C client (`native/vpointer.c`) speaking
   `zwlr_virtual_pointer_unstable_v1`. It moves the real compositor cursor, so
@@ -183,13 +259,18 @@ boxes and OpenCV for solid-colour buttons (VRoid's primary pills are
   virtual-pointer protocol has no keyboard counterpart and VRoid is an
   Xwayland client anyway.
 
+On macOS everything is a **CGEvent** posted on the HID event tap: mouse
+moves/drags/clicks (with a real click count for double-clicks), scroll-wheel
+lines, and keyboard events that carry both an ANSI virtual key code (so
+⌘-shortcuts land) and the Unicode string (so any character types).
+
 **Coordinate spaces.** Three are in play and they are all different:
 
-| space | size on the reference machine | who uses it |
-|---|---|---|
-| Hyprland **layout** (logical) | 2048 × 1152 | `hyprctl`, the virtual pointer |
-| **image pixels** of a capture | 2560 × 1440 | tesseract, cv2, everything you see |
-| **X11** pixels (Xwayland) | 2560 × 1440 | XTEST |
+| space | Hyprland reference machine | macOS reference machine | who uses it |
+|---|---|---|---|
+| **layout** (logical) | 2048 × 1152 | 1470 × 956 points | `hyprctl` + the virtual pointer / Quartz + CGEvent |
+| **image pixels** of a capture | 2560 × 1440 | 2940 × 1790 (maximised window, title bar trimmed) | tesseract, cv2, everything you see |
+| **X11** pixels (Xwayland) | 2560 × 1440 | — | XTEST |
 
 Tools take and return **image px** (`space="image"`) by default and convert
 internally, so `vroid_find_text` output can be handed straight to
@@ -220,20 +301,33 @@ This is GUI automation with no API underneath. Be realistic about it:
   letter-spaced or light-on-dark labels get split or dropped (`Export` →
   `E` + `xport`). White-on-blue is lost entirely, which is why
   `vroid_find_button` exists. Icons have no text at all — those anchors are
-  hard-coded fractions of the window.
-* **Coupled to the UI version.** Needles and fractional anchors were
-  calibrated on VRoid Studio 2.14.0, English, at 2560×1440 / scale 1.25. A
-  pixiv UI reflow, another language, or a different monitor can require
-  re-measuring. (Japanese UI → kebab `⋮` → Settings → Language.)
+  hard-coded in VRoid's UI points, measured from the nearest window edge.
+* **Coupled to the UI version.** Needles and icon anchors were calibrated
+  on VRoid Studio 2.14.0, English, at 2560×1440 / scale 1.25. A pixiv UI
+  reflow, another language, or a different monitor can require re-measuring.
+  (Japanese UI → kebab `⋮` → Settings → Language.) The macOS build draws the
+  same UI at 2 px per point; the anchors are expressed in UI points from the
+  window edges, and the toolbar icons, rail, parameter boxes and colour
+  boxes were checked against a live 2940×1790 capture. Modal-centre regions
+  are still window fractions.
 * **Modals appear outside your search region** and swallow clicks silently.
 * **Timing is guessed.** The 3D viewport takes ~5 s after a base is chosen;
   export takes 5–30 s, longer for heavy models.
-* **The Wine save dialog is a separate window** with its own class and
-  geometry — use `vroid_screenshot(whole_screen=true)` there.
-* **Single instance, single session.** One VRoid window, one desktop, no
-  headless mode, no parallelism. It drives *your* screen.
-* **The idle screensaver** can grab the session mid-run. The guard refuses to
-  type into it and closes that one window (and only that one) before acting.
+* **The save dialog is a separate window** — Wine's, with its own class and
+  geometry, or a centred `NSSavePanel` on macOS — use
+  `vroid_screenshot(whole_screen=true)` there. On macOS the path goes in via
+  ⌘⇧G ("Go to the folder") then the file name; verified up to the point of
+  pressing Save, which an actual export has not yet exercised here.
+* **Save As to an existing file is not handled reliably.** The replacement
+  confirmation is unhandled and a stale file can satisfy the completion
+  check. Use a new `.vroid` filename. VRM export deletes an existing target
+  before starting; use a new `.vrm` path to preserve previous exports.
+* **Single instance, single session, single display.** One VRoid window, one
+  desktop, no headless mode, no parallelism. It drives *your* screen; on macOS
+  the primary display (the one with the menu bar at 0,0) is assumed.
+* **The idle screensaver** can grab the session mid-run (Linux). The guard
+  refuses to type into it and closes that one window (and only that one)
+  before acting.
 * **Attended use is recommended.** See below.
 
 ## Security
@@ -247,6 +341,8 @@ also the risk:
 * Keystrokes go to whatever holds keyboard focus. The driver refuses to act
   unless VRoid Studio is focused, but a careless or hostile prompt can still
   click anywhere *inside* VRoid.
+* Screenshot and OCR tools can bring VRoid forward if the macOS window-id
+  capture fails its geometry check while VRoid is on another Space.
 * `vroid_launch(restart=true)` kills VRoid Studio and loses unsaved work.
 * Nothing here is sandboxed and there is no confirmation step.
 
@@ -258,10 +354,16 @@ when you're done.
 ## Development
 
 ```bash
+uv run pytest -q                                 # display-free unit tests (gestures, key maps, both backends)
 uv run python scripts/smoke_test.py              # start the server, list tools, call vroid_status
 uv run python scripts/smoke_test.py --screenshot # + one passive capture if VRoid is open
 uv run vroid-driver shot                         # the original driver CLI, still here
 ```
+
+The unit tests require no running VRoid instance or desktop permissions.
+The smoke test checks MCP startup and status on a configured desktop;
+`--screenshot` also needs Screen Recording on macOS. These checks do not
+prove that a save or export completes successfully.
 
 `vroid-driver` (`mcp_vroid.driver.cli`) is a shell interface to the same
 engine — `launch`, `shot`, `find`, `click`, `tab`, `slider`, `export`, `cam`,
@@ -271,31 +373,43 @@ Layout:
 
 ```
 src/mcp_vroid/server.py       MCP tool definitions (stdio)
-src/mcp_vroid/session_env.py  recovers the Wayland/X session env
+src/mcp_vroid/session_env.py  recovers the Wayland/X session env (no-op on macOS)
 src/mcp_vroid/driver/         the engine
-  window.py                   hyprctl: find / launch / focus / workspaces   <- Hyprland-specific
-  capture.py                  grim + coordinate spaces
+  window.py                   find / launch / focus / workspaces (platform-neutral surface)
+  capture.py                  Shot + coordinate spaces
   locate.py                   tesseract OCR + colour button matching
-  input.py                    vpointer (Wayland) + XTEST (X11)
+  input.py                    gestures: glide-click, drag, wheel, type, keys
   actions.py                  the VRoid-specific flows
-native/vpointer.c             zwlr_virtual_pointer client
+  backends/hyprland.py        hyprctl + grim + vpointer + XTEST
+  backends/macos.py           Quartz window list + screencapture + CGEvent + AppKit
+native/vpointer.c             zwlr_virtual_pointer client (Linux)
+tests/                        display-free unit tests
 ```
 
 ## Contributing
 
 Issues and PRs welcome. Useful things to bring:
 
-* **A port to another wlroots compositor.** Only `driver/window.py` is
-  Hyprland-specific; the rest already works anywhere `grim` and
-  `zwlr_virtual_pointer` do.
+* **A port to another compositor or OS.** Implement the module-level
+  functions in `driver/backends/hyprland.py` (a Sway port is a `swaymsg`
+  rewrite of the window half; `grim` and `zwlr_virtual_pointer` already work
+  there) and register the name in `backends/__init__.py`.
+* **A pixel-by-pixel re-measure of the anchors on macOS**, and a report of
+  the export flow end to end there.
 * **Anchors for other resolutions or DPI scales**, or for the Japanese UI.
 * **Bug reports** — include your compositor, VRoid Studio version, monitor
   resolution and scale, and the output of `vroid_status`. A capture from the
   failing step helps enormously.
 
-Nothing here is auto-formatted or linted by CI; match the surrounding style.
+GitHub Actions runs the display-free unit tests on Linux and macOS with
+Python 3.11 and 3.12. Desktop smoke tests and live VRoid flows must be run
+locally. There is no formatter or linter configured; match the surrounding
+style.
 
 ## Licence
+
+Based on [nhodges/mcp-vroid](https://github.com/nhodges/mcp-vroid), with
+native macOS support and additional tests in this repository.
 
 MIT — see [LICENSE](LICENSE). VRoid Studio is a product of pixiv Inc.; this
 project is unaffiliated with pixiv and simply drives the app's UI.

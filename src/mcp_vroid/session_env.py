@@ -10,11 +10,16 @@ status 1", discover them from the runtime dir before anything else runs.
 
 Anything already set in the environment wins, so a client that does pass the
 full session env changes nothing here.
+
+On macOS there is no session environment to recover - Quartz and AppKit find
+the window server through the user's Mach bootstrap namespace - so this is a
+no-op there.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -36,6 +41,8 @@ def _newest(paths: list[Path]) -> Path | None:
 def ensure_session_env() -> dict[str, str]:
     """Fill in the missing session variables; returns what this call set."""
     filled: dict[str, str] = {}
+    if sys.platform == "darwin":
+        return filled
     rd = _runtime_dir()
 
     if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):

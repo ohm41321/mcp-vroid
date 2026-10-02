@@ -1,25 +1,25 @@
-"""Screenshot the VRoid window with grim and hand back a PIL image.
+"""Screenshot the VRoid window and hand back a PIL image.
 
-Coordinates: Hyprland's layout is *logical* (2048x1152 here for a 2560x1440
-panel at scale 1.25). grim renders at the output's native scale, so image
-pixels are `scale` times the layout units. A Shot carries the mapping so
-callers can hand OCR pixel coords straight back to input.click().
+Coordinates: the compositor's layout is *logical* (Hyprland: 2048x1152 for
+a 2560x1440 panel at scale 1.25; macOS: points, 1470x956 on a Retina
+MacBook). Captures come back at the output's native scale, so image pixels
+are `scale` times the layout units. A Shot carries the mapping so callers
+can hand OCR pixel coords straight back to input.click().
 """
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image
 
 from . import window as W
+from .backends import backend as _B
 from .paths import CAPTURES
 
 
 def output_scale() -> float:
-    mons = W.hyprctl_json("monitors")
-    return float(mons[0].get("scale", 1.0)) if mons else 1.0
+    return W.primary_output().scale
 
 
 def next_capture_path(tag: str = "") -> Path:
@@ -63,12 +63,9 @@ def grab_region(x: int, y: int, w: int, h: int, tag: str = "",
                 path: Path | None = None) -> Shot:
     path = path or next_capture_path(tag)
     scale = output_scale()
-    subprocess.run(
-        ["grim", "-g", f"{x},{y} {w}x{h}", str(path)],
-        check=True, capture_output=True,
-    )
+    _B.capture_region(x, y, w, h, path)
     img = Image.open(path).convert("RGB")
-    # grim may clamp the region at the output edge; derive the real scale.
+    # the capture may clamp the region at the output edge; derive the real scale.
     if w:
         scale = img.width / w
     return Shot(img, path, x, y, scale)
@@ -78,12 +75,21 @@ def grab_window(win: W.Window | None = None, tag: str = "") -> Shot:
     win = win or W.find_window()
     if win is None:
         raise RuntimeError("VRoid Studio window not found")
-    return grab_region(*win.geometry, tag=tag)
+    path = next_capture_path(tag)
+    if _B.capture_window(win, path):
+        # by window id (macOS): correct even when the window is on another
+        # Space or covered, so looking never steals focus. The backend has
+        # checked the image matches the window's bounds.
+        img = Image.open(path).convert("RGB")
+        return Shot(img, path, win.x, win.y, img.width / win.w)
+    if win.workspace == "other-space":
+        # the window lives in a Space that is not showing (or its bounds
+        # are stale); a capture of its rectangle would show whatever is.
+        # Bring it forward first, which also re-measures it.
+        win = W.focus(win)
+    return grab_region(*win.geometry, tag=tag, path=path)
 
 
 def grab_screen(tag: str = "") -> Shot:
-    mon = W.hyprctl_json("monitors")[0]
-    scale = float(mon.get("scale", 1.0))
-    w = int(round(mon["width"] / scale))
-    h = int(round(mon["height"] / scale))
-    return grab_region(int(mon["x"]), int(mon["y"]), w, h, tag=tag)
+    out = W.primary_output()
+    return grab_region(out.x, out.y, out.w, out.h, tag=tag)

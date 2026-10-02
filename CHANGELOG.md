@@ -4,6 +4,52 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
 follow [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+* **macOS backend** (`src/mcp_vroid/driver/backends/macos.py`): the native
+  VRoid Studio build is driven through Quartz (window list across Spaces,
+  frontmost app from the window server), AppKit (focus / release), System
+  Events (maximise to the visible frame, un-minimise), `screencapture`
+  (normally by window id without changing focus; Retina-scaled) and CGEvent
+  (pointer, wheel, keyboard with `FlagsChanged` modifiers so Unity sees ⌘).
+  Selected automatically on Darwin; `MCP_VROID_BACKEND` overrides.
+* `vroid_status` reports the backend and, on macOS, the Accessibility and
+  Screen Recording permissions; input refuses to run without Accessibility.
+* `cmd` as a modifier name in `vroid_key`: the app's shortcut modifier on
+  either platform (Ctrl on Linux, ⌘ on macOS).
+* OCR midtone-boost fallback pass (`locate.FALLBACK_PASSES`), so VRoid's
+  light-grey tab labels and captions are found even when the frame contains
+  true black; `find_text` only pays for it when the usual passes miss.
+* Display-free unit tests (`uv run pytest`) for backend selection, gesture
+  composition, the vpointer script format and the macOS key map.
+* GitHub Actions unit-test matrix for Linux and macOS on Python 3.11/3.12.
+
+### Changed
+
+* The driver is split into a platform-neutral surface (`window`, `capture`,
+  `input`) and per-platform backends; the Hyprland code moved verbatim into
+  `backends/hyprland.py`. Public driver and tool APIs are unchanged.
+* `input.double_click` sends both presses in one gesture (click count 2)
+  instead of two separate glide-and-click calls.
+* Icon anchors in `actions.py` are VRoid UI points measured from the nearest
+  window edge (`_pt`, `_ui`) instead of window fractions, so they hold on a
+  Retina capture; numerically identical on the 2560×1440 reference.
+* The save-dialog path types through the focus guard like every other input.
+* `python-xlib` is a Linux-only dependency; `pyobjc-framework-Quartz` is
+  macOS-only.
+
+### Removed
+
+* The unused `backend="wayland"` wheel path in `input.scroll` (VRoid ignores
+  virtual-pointer axis events; XTEST was always the default).
+
+### Fixed
+
+* macOS keyboard events count UTF-16 code units correctly, preserving emoji
+  and other characters outside the Basic Multilingual Plane.
+
 ## [0.1.0] — 2026-08-24
 
 First public release.

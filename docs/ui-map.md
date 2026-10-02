@@ -5,9 +5,21 @@ VRoid Studio **2.14.0**, English UI, captured fullscreen at **2560 × 1440**
 px** — the space `vroid_click` and `vroid_find_text` use by default.
 
 Treat every number as a *hint*. The tools locate by OCR and colour first and
-fall back to these anchors only for things that have no text (icons). On
-another resolution or DPI scale, the fractional anchors will need
-re-measuring.
+fall back to these anchors only for things that have no text (icons). The
+UI keeps its size in *points* whatever the window size: left-anchored
+widgets (rail, hamburger, tabs) keep their distance from the left edge,
+right-anchored ones (toolbar icons, parameter boxes) from the right, so
+`actions.py` stores anchors as points from the nearest edge and scales by
+the backend's `ui_scale` (1 px/pt on the Hyprland box, 2 on a Retina Mac).
+
+On macOS (native build, Retina) the maximised window captures at **2940 ×
+1790** image px (1470 × 895 pt: the display minus menu bar and the 28 pt
+title bar, which the backend trims so `y = 0` is the tab strip); a whole
+screen capture is 2940 × 1912. The UI is the same, drawn at 2× — halve the
+numbers below for points, double them for macOS px. Checked live: share
+icon 96 pt from the right, parameter value box 56 pt from the right, colour
+box 145 pt from the right / 24 pt below its label, rail x = 24 pt with icons
+at y ≈ 80 + 50·i pt.
 
 ## Start screen
 
